@@ -1,0 +1,139 @@
+:github-tag: master
+:github-repo: spring-cloud/spring-cloud-sleuth
+:github-raw: http://raw.github.com/{github-repo}/{github-tag}
+:github-code: http://github.com/{github-repo}/tree/{github-tag}
+= Spring Cloud Sleuth
+
+include::intro.adoc[]
+
+include::features.adoc[]
+
+== Sampling
+
+In distributed tracing the data volumes can be very high so sampling
+can be important (you usually don't need to export all spans to get a
+good picture of what is happening). Spring Cloud Sleuth has a
+`Sampler` strategy that you can implement to take control of the
+sampling algorithm. By default you get a strategy that continues to
+trace if a span is already active, but never starts a new one with the
+exportable flag set. If all your apps run with this sampler you will
+see traces in logs, but not in any remote store. For testing the
+default is often enough, and it probably is all you need if you are
+only using the logs (e.g. with an ELK aggregator). If you are
+exporting span data to Zipkin or Spring Cloud Stream, there is also an
+`AlwaysSampler` that exports everything.
+
+A sampler can be installed just by creating a bean definition, e.g:
+
+[source,java]
+----
+@Bean
+public Sampler<?> defaultSampler() {
+    return new AlwaysSampler();
+}
+----
+
+== Instrumentation
+
+Spring Cloud Sleuth instruments all your Spring application
+automatically, so you shouldn't have to do anything to activate
+it. The instrumentation is added using a variety of technologies
+according to the stack that is available, e.g. for a servlet web
+application we use a `Filter`, and for Spring Integration we use
+`ChannelInterceptors`.
+
+You can customize the keys used in span tags. To limit the volume of
+span data, by default an HTTP request will be tagged only with a
+handful of metadata like the status code, host and URL. You can add
+request headers by configuring `spring.sleuth.keys.http.headers` (a
+list of header names).
+
+NOTE: Remember that tags are only collected and exported if there is a
+`Sampler` that allows it (by default there is not, so there is no
+danger of accidentally collecting too much data without configuring
+something).
+
+== Span Data as Messages
+
+You can accumulate and send span data over
+http://cloud.spring.io/spring-cloud-stream[Spring Cloud Stream] by
+including the `spring-cloud-sleuth-stream` jar as a dependency, and
+adding a Channel Binder implementation
+(e.g. `spring-cloud-starter-stream-rabbit` for RabbitMQ or
+`spring-cloud-starter-stream-kafka` for Kafka). This will
+automatically turn your app into a producer of messages with payload
+type `Spans`. 
+
+=== Zipkin Consumer
+
+There is a special convenience annotation for setting up a message consumer 
+for the Span data and pushing it into a Zipkin `SpanStore`. This application
+
+[source,java]
+----
+@SpringBootApplication
+@EnableZipkinStreamServer
+public class Consumer {
+  public static void main(String[] args) {
+    SpringApplication.run(Consumer.class, args);
+  }
+}
+----
+
+will listen for the Span data on whatever transport you provide via a
+Spring Cloud Stream `Binder` (e.g. include
+`spring-cloud-starter-stream-rabbit` for RabbitMQ, and similar
+starters exist for Redis and Kafka). The app will also be a
+https://github.com/openzipkin/zipkin-java[Zipkin query server], so you
+can point a standard Zipkin UI at it (e.g. run the consumer app on
+port 9411 if you want the query server on the same host and the
+default configuration).
+
+The deafult `SpanStore` is in-memory (good for demos and getting
+started quickly). For a more robust solution you can add MySQL and
+`spring-boot-starter-jdbc` to your classpath and enable the JDBC
+`SpanStore` via configuration, e.g.:
+
+[source,yaml]
+----
+spring:
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+  datasource:
+    schema: classpath:/mysql.sql
+    url: jdbc:mysql://${MYSQL_HOST:localhost}/test
+    username: root
+    password: root
+# Switch this on to create the schema on startup:
+    initialize: true
+    continueOnError: true
+  sleuth:
+    enabled: false
+zipkin:
+  store:
+    type: mysql
+----
+
+=== Custom Consumer
+
+A custom consumer can also easily be implemented using
+`spring-cloud-sleuth-stream` and binding to the `SleuthSink`. Example:
+
+[source,java]
+----
+@EnableBinding(SleuthSink.class)
+@SpringBootApplication(exclude = SleuthStreamAutoConfiguration.class)
+@MessageEndpoint
+public class Consumer {
+
+    @ServiceActivator(inputChannel = SleuthSink.INPUT)
+    public void sink(Spans input) throws Exception {
+        // ... process spans
+    }
+}
+----
+
+NOTE: the sample consumer application above explicitly excludes
+`SleuthStreamAutoConfiguration` so it doesn't send messages to itself,
+but this is optional (you might actually want to trace requests into
+the consumer app).

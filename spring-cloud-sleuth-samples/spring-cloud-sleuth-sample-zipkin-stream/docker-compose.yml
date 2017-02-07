@@ -1,0 +1,39 @@
+mysql:
+  image: mysql
+  ports:
+    - 3306:3306
+  environment:
+    - MYSQL_ROOT_PASSWORD=root
+    - MYSQL_DATABASE=test
+rabbitmq:
+  image: rabbitmq:management
+  expose:
+    - 5672
+  ports:
+    - 5672:5672
+    - 15672:15672
+zipkin:
+  build: .
+  volumes:
+    - ../..:/app
+    - ~:/home/spring
+  environment:
+    - MYSQL_HOST=mysql
+    - RABBIT_HOST=rabbitmq
+    # - JAVA_OPTS=your jvm params here
+  expose:
+    - 9411
+  ports:
+    - 9411:9411
+  links:
+    - mysql
+    - rabbitmq
+web:
+  image: openzipkin/zipkin-web:1.30.2
+  ports:
+    - 8080:8080
+  environment:
+    - TRANSPORT_TYPE=http
+    - WEB_LOG_LEVEL=DEBUG
+  links:
+    - zipkin:query
